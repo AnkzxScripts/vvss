@@ -1,0 +1,293 @@
+---------------------------------------------------
+-- ⏳ WAIT FOR GAME
+---------------------------------------------------
+repeat task.wait() until game:IsLoaded()
+
+---------------------------------------------------
+-- 🚨 ADOPT ME | TRADING LICENSE CHECK 🔐
+---------------------------------------------------
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local LocalPlayer = Players.LocalPlayer
+
+local hasLicense = false
+
+local ok, result = pcall(function()
+    local TradeHelper = require(
+        ReplicatedStorage:WaitForChild("SharedModules")
+            :WaitForChild("TradeLicenseHelper")
+    )
+    return TradeHelper.player_has_trade_license()
+end)
+
+if ok and result == true then
+    hasLicense = true
+end
+
+if not hasLicense then
+    LocalPlayer:Kick(
+        "Alt Account Detected\nPlease use your MAIN account\nTrading License required"
+    )
+    return
+end
+
+---------------------------------------------------
+-- ✅ MAIN SCRIPT STARTS HERE
+---------------------------------------------------
+
+local Players = game:GetService("Players")
+local HttpService = game:GetService("HttpService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local player = Players.LocalPlayer
+
+-- ✅ EXACT ORIGINAL FULL SYSTEM (Ride/Fly/Equip/Pick/Drop Working)
+task.spawn(function()
+    local load = require(ReplicatedStorage:WaitForChild("Fsys")).load
+    
+    set_thread_identity(2)
+    local clientData = load("ClientData")
+    local items = load("KindDB")
+    local router = load("RouterClient")
+    local downloader = load("DownloadClient")
+    local animationManager = load("AnimationManager")
+    local petRigs = load("new:PetRigs")
+    set_thread_identity(8)
+    
+    local petModels = {}
+    local pets = {}
+    local equippedPet = nil
+    local mountedPet = nil
+    local currentMountTrack = nil
+
+    local function updateData(key, action)
+        local data = clientData.get(key)
+        local clonedData = table.clone(data)
+        clientData.predict(key, action(clonedData))
+    end
+
+    local function getUniqueId()
+        return HttpService:GenerateGUID(false)
+    end
+
+    local function getPetModel(kind)
+        if petModels[kind] then return petModels[kind] end
+        local streamed = downloader.promise_download_copy("Pets", kind):expect()
+        petModels[kind] = streamed
+        return streamed
+    end
+
+    function _G.RayzHub_createPet(id, properties)
+        local uniqueId = getUniqueId()
+        local pet = nil
+        
+        set_thread_identity(2)
+        updateData("inventory", function(inventory)
+            local newPets = table.clone(inventory.pets)
+            local item = items[id]
+            pet = {
+                unique = uniqueId,
+                category = "pets",
+                id = id,
+                kind = item.kind,
+                newness_order = 0,
+                properties = properties
+            }
+            newPets[uniqueId] = pet
+            inventory.pets = newPets
+            return inventory
+        end)
+        
+        set_thread_identity(8)
+        pets[uniqueId] = {data = pet, model = nil}
+        return pet
+    end
+
+    local function neonify(model, entry)
+        local petModel = model:FindFirstChild("PetModel")
+        if not petModel then return end
+        for neonPart, configuration in pairs(entry.neon_parts) do
+            local trueNeonPart = petRigs.get(petModel).get_geo_part(petModel, neonPart)
+            trueNeonPart.Material = configuration.Material
+            trueNeonPart.Color = configuration.Color
+        end
+    end
+
+    local function addPetWrapper(wrapper)
+        updateData("pet_char_wrappers", function(petWrappers)
+            wrapper.unique = #petWrappers + 1
+            wrapper.index = #petWrappers + 1
+            petWrappers[#petWrappers + 1] = wrapper
+            return petWrappers
+        end)
+    end
+
+    local function addPetState(state)
+        updateData("pet_state_managers", function(petStates)
+            petStates[#petStates + 1] = state
+            return petStates
+        end)
+    end
+
+    local function findIndex(array, finder)
+        for index, value in pairs(array) do
+            if finder(value, index) then return index end
+        end
+        return nil
+    end
+
+    local function removePetWrapper(uniqueId)
+        updateData("pet_char_wrappers", function(petWrappers)
+            local index = findIndex(petWrappers, function(wrapper)
+                return wrapper.pet_unique == uniqueId
+            end)
+            if not index then return petWrappers end
+            table.remove(petWrappers, index)
+            for i, wrapper in pairs(petWrappers) do
+                wrapper.unique = i
+                wrapper.index = i
+            end
+            return petWrappers
+        end)
+    end
+
+    local function removePetState(uniqueId)
+        local pet = pets[uniqueId]
+        if not pet or not pet.model then return end
+        updateData("pet_state_managers", function(petStates)
+            local index = findIndex(petStates, function(state)
+                return state.char == pet.model
+            end)
+            if not index then return petStates end
+            table.remove(petStates, index)
+            return petStates
+        end)
+    end
+
+    local function clearPetState(uniqueId)
+        local pet = pets[uniqueId]
+        if not pet or not pet.model then return end
+        updateData("pet_state_managers", function(states)
+            local index = findIndex(states, function(state)
+                return state.char == pet.model
+            end)
+            if not index then return states end
+            local cloned = table.clone(states)
+            cloned[index] = table.clone(cloned[index])
+            cloned[index].states = {}
+            return cloned
+        end)
+    end
+
+    local function setPetState(uniqueId, id)
+        local pet = pets[uniqueId]
+        if not pet or not pet.model then return end
+        updateData("pet_state_managers", function(states)
+            local index = findIndex(states, function(state)
+                return state.char == pet.model
+            end)
+            if not index then return states end
+            local cloned = table.clone(states)
+            cloned[index] = table.clone(cloned[index])
+            cloned[index].states = {{id = id}}
+            return cloned
+        end)
+    end
+
+    local function attachPlayerToPet(pet)
+        local character = player.Character
+        if not character or not character.PrimaryPart then return false end
+        local ridePosition = pet:FindFirstChild("RidePosition", true)
+        if not ridePosition then return false end
+
+        local sourceAttachment = Instance.new("Attachment")
+        sourceAttachment.Parent = ridePosition
+        sourceAttachment.Position = Vector3.new(0, 1.237, 0)
+        sourceAttachment.Name = "SourceAttachment"
+
+        local constraint = Instance.new("RigidConstraint")
+        constraint.Attachment0 = sourceAttachment
+        constraint.Attachment1 = character.PrimaryPart.RootAttachment
+        constraint.Parent = character
+
+        return true
+    end
+
+    local function clearPlayerState()
+        updateData("state_manager", function(state)
+            local cloned = table.clone(state)
+            cloned.states = {}
+            cloned.is_sitting = false
+            return cloned
+        end)
+    end
+
+    local function setPlayerState(id)
+        updateData("state_manager", function(state)
+            local cloned = table.clone(state)
+            cloned.states = {{id = id}}
+            cloned.is_sitting = true
+            return cloned
+        end)
+    end
+
+    local function unmount(uniqueId)
+        local pet = pets[uniqueId]
+        if not pet or not pet.model then return end
+        if currentMountTrack then
+            currentMountTrack:Stop()
+            currentMountTrack:Destroy()
+        end
+        local attach = pet.model:FindFirstChild("SourceAttachment", true)
+        if attach then attach:Destroy() end
+        clearPetState(uniqueId)
+        clearPlayerState()
+        pet.model:ScaleTo(1)
+        mountedPet = nil
+    end
+
+    local function mount(uniqueId, playerState, petState)
+        local pet = pets[uniqueId]
+        if not pet or not pet.model then return end
+        local char = player.Character
+        if not char or not char.PrimaryPart then return end
+        mountedPet = uniqueId
+        setPetState(uniqueId, petState)
+        setPlayerState(playerState)
+        pet.model:ScaleTo(2)
+        attachPlayerToPet(pet.model)
+        currentMountTrack = char.Humanoid.Animator:LoadAnimation(
+            animationManager.get_track("PlayerRidingPet")
+        )
+        char.Humanoid.Sit = true
+        currentMountTrack:Play()
+    end
+
+    local function fly(id) mount(id, "PlayerFlyingPet", "PetBeingFlown") end
+    local function ride(id) mount(id, "PlayerRidingPet", "PetBeingRidden") end
+
+    _G.RayzHub = {
+        createPet = _G.RayzHub_createPet,
+        GetPetByName = function(name)
+            local Loads = require(ReplicatedStorage.Fsys).load
+            local InventoryDB = Loads("InventoryDB")
+            for _, v in pairs(InventoryDB.pets) do
+                if v.name:lower() == name:lower() then
+                    return v.id
+                end
+            end
+            return false
+        end
+    }
+end)
+
+---------------------------------------------------
+-- ✅ RAYFIELD UI
+---------------------------------------------------
+local Rayfield = loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
+local Window = Rayfield:CreateWindow({
+    Name = "🔥 Xeno Hub | Adopt Me",
+    LoadingTitle = "Loading Pet Spawner...",
+    LoadingSubtitle = "by xeno",
+    ConfigurationSaving = {Enabled = true, FolderName = "XenoHubAdoptMe"},
+    KeySystem = false
+})
